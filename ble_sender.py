@@ -77,10 +77,10 @@ async def run(args):
 
 async def sync_ble(args, executable, latest):
     backoff = 2
+    status('scanning')
     while True:
         try:
             print('Scanning for CodexDisplay...', flush=True)
-            status('scanning')
             devices = await BleakScanner.discover(timeout=8, return_adv=True)
             matches = [d for d, adv in devices.values() if SERVICE in [s.lower() for s in adv.service_uuids]
                        and (not args.address or d.address.lower() == args.address.lower())]
@@ -112,6 +112,7 @@ async def sync_ble(args, executable, latest):
                     previous = json.loads(state_file.read_text(encoding='utf-8'))
                 except (OSError, ValueError):
                     previous = None
+                completed_sync = False
                 while client.is_connected:
                     snapshot = latest.get('snapshot')
                     # Never resend an old cached snapshot as a fresh hardware update.
@@ -165,6 +166,7 @@ async def sync_ble(args, executable, latest):
                     temporary.write_text(json.dumps(current), encoding='utf-8')
                     temporary.replace(state_file)
                     previous = current
+                    completed_sync = True
                     backoff = 2
                     if args.once:
                         return
@@ -178,6 +180,11 @@ async def sync_ble(args, executable, latest):
                         if reset_monitor and reset_settings()['enabled'] and not getattr(args, 'no_voice', False):
                             if await asyncio.to_thread(reset_monitor.pending):
                                 break
+                if completed_sync:
+                    print('Display entered scheduled sleep', flush=True)
+                    status('sleeping', retrySeconds=backoff)
+                    await asyncio.sleep(backoff)
+                    continue
                 raise RuntimeError('BLE disconnected')
         except Exception as error:
             if args.once:
