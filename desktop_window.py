@@ -9,7 +9,7 @@ from PySide6.QtCore import Qt, QTimer, QUrl
 from PySide6.QtGui import QIcon, QDesktopServices
 from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QComboBox, QCheckBox, QSlider, QLineEdit, QSystemTrayIcon, QMenu, QMessageBox,
-    QDialog, QPlainTextEdit)
+    QDialog, QPlainTextEdit, QSpinBox)
 from app_paths import data_dir, write_json
 from desktop_settings import validated
 
@@ -69,7 +69,7 @@ class DesktopApp(QWidget):
         row = QHBoxLayout(); row.addWidget(QLabel('监控项目')); row.addStretch()
         self.provider = QComboBox(); self.provider.addItems(['Codex']); self.provider.setMinimumWidth(160); row.addWidget(self.provider)
         layout.addLayout(row)
-        self.monitor = QCheckBox('开启后台同步（每分钟）'); self.monitor.setChecked(self.settings['monitor']); layout.addWidget(self.monitor)
+        self.monitor = QCheckBox('开启后台同步（每 5 分钟）'); self.monitor.setChecked(self.settings['monitor']); layout.addWidget(self.monitor)
         self.voice = QCheckBox('额度重置后说“干活啦”'); self.voice.setChecked(self.settings['voice']); layout.addWidget(self.voice)
         row = QHBoxLayout(); row.addWidget(QLabel('提示音量')); row.addStretch()
         self.volume_text = QLabel(str(self.settings['volume'])); row.addWidget(self.volume_text); layout.addLayout(row)
@@ -83,9 +83,12 @@ class DesktopApp(QWidget):
         row.addWidget(self.save_button); row.addWidget(self.preview_button); row.addStretch(); layout.addLayout(row)
         self.feedback = QLabel('关闭窗口后继续运行；从系统托盘退出可停止同步。')
         self.feedback.setObjectName('muted'); self.feedback.setWordWrap(True); layout.addWidget(self.feedback)
+        self.reset_state = QLabel('免费重置通知等待检查'); self.reset_state.setObjectName('muted'); self.reset_state.setWordWrap(True)
+        layout.addWidget(self.reset_state)
         layout.addStretch()
         row = QHBoxLayout()
         hide = QPushButton('最小化到托盘'); hide.clicked.connect(self.hide_to_tray); row.addWidget(hide); row.addStretch()
+        reset_button = QPushButton('重置通知设置'); reset_button.clicked.connect(self.open_reset_settings); row.addWidget(reset_button)
         logs = QPushButton('打开日志'); logs.clicked.connect(self.open_logs)
         row.addWidget(logs); layout.addLayout(row)
         if not smoke:
@@ -102,7 +105,7 @@ class DesktopApp(QWidget):
             self.timer = QTimer(self); self.timer.timeout.connect(self.poll); self.timer.start(1000)
 
     def open_settings(self):
-        self.showNormal(); self.raise_(); self.activateWindow()
+        self.hide(); self.showNormal(); self.raise_(); self.activateWindow()
 
     def tray_activated(self, reason):
         if reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick):
@@ -110,6 +113,50 @@ class DesktopApp(QWidget):
 
     def toggle(self):
         self.monitor.setChecked(not self.settings['monitor']); self.apply()
+
+    def open_reset_settings(self):
+        from reset_monitor import settings
+        config = settings()
+        dialog = QDialog(self); dialog.setWindowTitle('免费重置通知'); dialog.resize(640,480)
+        layout = QVBoxLayout(dialog)
+        source = QLabel('Data: <a href="https://codex-reset.com/">codex-reset.com</a>')
+        source.setOpenExternalLinks(True); layout.addWidget(source)
+        enabled = QCheckBox('启用免费重置通知'); enabled.setChecked(config['enabled']); layout.addWidget(enabled)
+        interval = QSpinBox(); interval.setRange(60,3600); interval.setSingleStep(60)
+        interval.setValue(config['interval']); interval.setSuffix(' 秒 / 次'); layout.addWidget(interval)
+        note = QLabel('无需 Token。列表显示预告与已确认重置，每 2 秒刷新；后台按检查间隔拉取。Tibo 预告也语音提醒；确认重置另行播报。个人用量以 Codex 为准。')
+        note.setWordWrap(True); layout.addWidget(note)
+        records = QPlainTextEdit(); records.setReadOnly(True); layout.addWidget(records)
+        checked = QLabel(); checked.setWordWrap(True); layout.addWidget(checked)
+        def refresh_records():
+            import datetime
+            status = read_json(self.home/'reset-status.json', {})
+            def local_time(value):
+                try:
+                    if isinstance(value, (int,float)):
+                        when = datetime.datetime.fromtimestamp(value,datetime.timezone.utc)
+                    else:
+                        when = datetime.datetime.fromisoformat(value.replace('Z','+00:00'))
+                    return when.astimezone(datetime.timezone(datetime.timedelta(hours=8))).strftime('%m/%d %H:%M:%S')
+                except (ValueError, TypeError, AttributeError):
+                    return '未知'
+            checked.setText('最近检查：'+local_time(status.get('time'))+'（北京时间） · '
+                + {'ready':'读取成功','disabled':'监控已暂停','error':status.get('error','读取失败')}.get(status.get('state'),'等待检查'))
+            content = '\n\n'.join(('【已确认重置】' if p.get('confirmed') else '【Tibo 重置预告】')
+                +' '+local_time(p.get('announced_at'))+'\n'+p.get('summary','')+'\n'+p.get('url','')
+                for p in status.get('events', [])) or '尚无重置消息。后台开启后自动检查。'
+            if records.toPlainText() != content:
+                scroll = records.verticalScrollBar().value()
+                records.setPlainText(content)
+                records.verticalScrollBar().setValue(scroll)
+        refresh_records()
+        timer = QTimer(dialog); timer.timeout.connect(refresh_records); timer.start(2000)
+        save = QPushButton('保存配置'); layout.addWidget(save)
+        def accept():
+            write_json(self.home/'reset-settings.json', {'enabled':enabled.isChecked(),
+                'interval':interval.value(), 'revision':uuid.uuid4().hex})
+            dialog.accept(); self.feedback.setText('免费通知设置已保存，后台运行时约 5 秒内生效。')
+        save.clicked.connect(accept); dialog.exec()
 
     def open_logs(self):
         dialog = QDialog(self)
@@ -120,7 +167,7 @@ class DesktopApp(QWidget):
         text = QPlainTextEdit(); text.setReadOnly(True); layout.addWidget(text)
         def refresh():
             sections = []
-            for name in ('quota-status.json', 'sync-status.json', 'ble-sync.log', 'ble-sync-error.log', 'desktop-error.log'):
+            for name in ('quota-status.json', 'sync-status.json', 'reset-status.json', 'forecast-status.json', 'ble-sync.log', 'ble-sync-error.log', 'desktop-error.log'):
                 path = self.home / name
                 try:
                     with path.open('rb') as stream:
@@ -178,6 +225,11 @@ class DesktopApp(QWidget):
     def poll(self):
         status = read_json(self.home / 'sync-status.json', {})
         quota = read_json(self.home / 'quota-status.json', {})
+        reset_status = read_json(self.home / 'reset-status.json', {})
+        message = {'disabled':'免费重置通知已暂停', 'ready':'免费重置通知已检查',
+            'error':reset_status.get('error','重置数据查询失败')}.get(reset_status.get('state'),'免费重置通知等待检查')
+        self.reset_state.setText(message + ' · Data: <a href="https://codex-reset.com/">codex-reset.com</a>')
+        self.reset_state.setOpenExternalLinks(True)
         # Desktop monitoring is independent of whether a BLE screen is connected.
         if quota.get('state') == 'ready':
             windows = quota.get('windows', [])
@@ -193,14 +245,16 @@ class DesktopApp(QWidget):
         elif self.worker.poll() is not None: text='同步进程已停止，请检查 Codex 登录或打开日志；点击保存可重试。'
         else:
             state = status.get('state')
-            text={'starting':'正在启动…','scanning':'正在寻找蓝牙显示器…','connected':'设备已连接，正在读取用量…',
-                'synced':'已同步 · 每分钟自动更新','retrying':'设备连接或查询失败，正在自动重试…',
+            text={'starting':'正在启动…','scanning':'正在寻找蓝牙显示器…','sleeping':'显示器休眠中，等待下次唤醒…','connected':'设备已连接，正在读取用量…',
+                'synced':'已同步 · 每 5 分钟自动更新','retrying':'设备连接或查询失败，正在自动重试…',
                 'error':'启动失败，请打开日志查看。'}.get(state,'正在同步…')
-            if quota.get('state') == 'ready' and state in ('scanning', 'retrying'):
-                text = 'Codex 用量已读取 · 显示器未连接，正在重连…'
+            if quota.get('state') == 'ready' and state == 'sleeping':
+                text = 'Codex 用量已读取 · 显示器休眠中，等待下次唤醒…'
+            elif quota.get('state') == 'ready' and state in ('scanning', 'retrying'):
+                text = 'Codex 用量已读取 · 正在等待显示器…'
             if quota.get('state') == 'error':
                 text = 'Codex 用量读取失败，请检查登录；详情见运行日志。'
-            elif quota.get('state') == 'ready' and time.time() - quota.get('time', 0) > 180:
+            elif quota.get('state') == 'ready' and time.time() - quota.get('time', 0) > 420:
                 text = 'Codex 用量暂未更新，正在重试…'
             if state=='synced':
                 windows=status.get('windows',[])
@@ -211,7 +265,7 @@ class DesktopApp(QWidget):
                         import datetime
                         when=datetime.datetime.fromtimestamp(reset,datetime.timezone(datetime.timedelta(hours=8)))
                         self.reset.setText('北京时间重置\n'+when.strftime('%m/%d  %H:%M'))
-                if time.time()-status.get('time',0)>180: text='同步暂未更新，请检查设备连接。'
+                if time.time()-status.get('time',0)>420: text='同步暂未更新，请检查设备连接。'
         self.state.setText(text)
         if self.tray: self.tray.setToolTip(f'{TITLE} · {self.quota.text()}\n{text}')
         if self.pending_id:

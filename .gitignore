@@ -10,3 +10,4 @@ arduino-cli.yaml
 !.env.example
 *.log
 *.pid
+x-token.bin

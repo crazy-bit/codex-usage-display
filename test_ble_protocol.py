@@ -42,3 +42,12 @@ class ProtocolTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class ResetCreditsProtocolTests(unittest.TestCase):
+    def test_credit_summary_transmitted_without_ids(self):
+        result={'rateLimits':{'limitId':'codex','primary':{'usedPercent':98,'windowDurationMins':10080,'resetsAt':1793082740}},
+            'rateLimitResetCredits':{'credits':[{'id':'private-credit-id','status':'available','resetType':'codexRateLimits','expiresAt':4000000000}]}}
+        wire=payload(normalize(result),1)
+        self.assertEqual(json.loads(wire)['rc'],{'n':1,'t':4000000000})
+        self.assertNotIn(b'private-credit-id',wire)

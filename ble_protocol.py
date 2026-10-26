@@ -28,7 +28,22 @@ def payload(snapshot, seq, limit='codex'):
     if not windows:
         raise ValueError('No quota windows returned')
     message = {'v': 1, 's': seq, 'at': int(datetime.fromisoformat(snapshot['fetchedAt']).timestamp()), 'w': windows}
+    credits = snapshot.get('resetCredits') if limit == 'codex' else None
+    message['rc'] = {'n':credits['availableCount'], 't':credits['expiresAt']} if credits is not None else None
     wire = (json.dumps(message, separators=(',', ':'), allow_nan=False) + '\n').encode()
     if len(wire) > 1024:
         raise ValueError('BLE payload too long')
     return wire
+
+
+def add_forecast(message, forecast, now=None):
+    """Optional display-only forecast; unavailable or stale values stay unknown."""
+    import time
+    now = time.time() if now is None else now
+    message['app'] = 'Codex'
+    message['f'] = None
+    if isinstance(forecast, dict):
+        p, t = forecast.get('p'), forecast.get('t')
+        if (type(p) in (int, float) and 0 <= p <= 100 and type(t) is int
+                and 0 <= now - t <= 1800):
+            message['f'] = {'p': p, 't': t, 'age': int(now - t), 'k': 1 if forecast.get('kind') == 'signal' else 0}

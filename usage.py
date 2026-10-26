@@ -44,6 +44,23 @@ def normalize_window(value):
     }
 
 
+def normalize_reset_credits(value, now=None):
+    """Expose counts/expiry only; never transmit credit IDs or redemption actions."""
+    now = time.time() if now is None else now
+    if not isinstance(value, dict) or not isinstance(value.get('credits'), list):
+        return None
+    credits = []
+    for credit in value['credits']:
+        if not isinstance(credit, dict) or credit.get('status') != 'available' or credit.get('resetType') != 'codexRateLimits':
+            continue
+        expiry = credit.get('expiresAt')
+        if expiry is not None and (type(expiry) not in (int,float) or not math.isfinite(expiry) or expiry <= now):
+            continue
+        credits.append(expiry)
+    expiries = [t for t in credits if t is not None]
+    return {'availableCount':len(credits), 'expiresAt':min(expiries) if expiries else None}
+
+
 def normalize(result):
     buckets = result.get('rateLimitsByLimitId')
     if not isinstance(buckets, dict) or not buckets:
@@ -51,6 +68,7 @@ def normalize(result):
         buckets = {legacy.get('limitId') or 'codex': legacy} if isinstance(legacy, dict) else {}
     return {
         'fetchedAt': datetime.now(timezone.utc).isoformat(),
+        'resetCredits': normalize_reset_credits(result.get('rateLimitResetCredits')),
         'buckets': [
             {
                 'limitId': key,

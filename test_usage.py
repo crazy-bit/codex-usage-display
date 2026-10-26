@@ -64,3 +64,15 @@ class QuotaTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class ResetCreditsTests(unittest.TestCase):
+    def test_available_unexpired_credits_only(self):
+        from usage import normalize_reset_credits
+        credits=[{'status':'available','resetType':'codexRateLimits','expiresAt':t,'id':'private'} for t in (100,300,200)]
+        credits.append({'status':'used','resetType':'codexRateLimits','expiresAt':400})
+        result=normalize_reset_credits({'credits':credits},now=150)
+        self.assertEqual(result,{'availableCount':2,'expiresAt':200})
+        self.assertNotIn('private',str(result))
+        self.assertIsNone(normalize_reset_credits(None))
+        self.assertEqual(normalize_reset_credits({'credits':[]}),{'availableCount':0,'expiresAt':None})

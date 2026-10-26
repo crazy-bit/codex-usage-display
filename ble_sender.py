@@ -6,10 +6,11 @@ import time
 import hashlib
 from pathlib import Path
 from bleak import BleakClient, BleakScanner
-from ble_protocol import SERVICE, RX, TX, payload, packets
+from ble_protocol import SERVICE, RX, TX, payload, packets, add_forecast
 from usage import AppServer, find_codex, normalize
 from reset_notice import reset_event
 from app_paths import data_dir, write_json
+from reset_monitor import watch, settings as reset_settings
 
 CONTROL = data_dir() / 'volume-request.json'
 RESULT = CONTROL.with_name('volume-result.json')
@@ -58,12 +59,18 @@ async def run(args):
             await asyncio.sleep(args.interval)
 
     collector = asyncio.create_task(collect())
+    reset_watcher = asyncio.create_task(watch(latest))
     try:
         await sync_ble(args, executable, latest)
     finally:
         collector.cancel()
+        reset_watcher.cancel()
         try:
             await collector
+        except asyncio.CancelledError:
+            pass
+        try:
+            await reset_watcher
         except asyncio.CancelledError:
             pass
 
@@ -78,13 +85,21 @@ async def sync_ble(args, executable, latest):
             matches = [d for d, adv in devices.values() if SERVICE in [s.lower() for s in adv.service_uuids]
                        and (not args.address or d.address.lower() == args.address.lower())]
             if not matches:
-                raise RuntimeError('Display not found; enable Bluetooth and power on the board')
+                print(f'Display asleep or unavailable; rescan in {backoff}s', flush=True)
+                status('sleeping', retrySeconds=backoff)
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 5)
+                continue
             if len(matches) != 1:
                 raise RuntimeError('Multiple displays found; specify --address')
             acknowledgements = asyncio.Queue()
+            telemetry = {}
             def notified(_, data):
                 try:
-                    acknowledgements.put_nowait(json.loads(data))
+                    message = json.loads(data)
+                    if type(message.get('b')) is int and 0 <= message['b'] <= 6000:
+                        telemetry['batteryMv'] = message['b']
+                    acknowledgements.put_nowait(message)
                 except (ValueError, UnicodeError):
                     pass
             async with BleakClient(matches[0]) as client:
@@ -105,13 +120,24 @@ async def sync_ble(args, executable, latest):
                     seq = time.time_ns() % 1_000_000
                     wire = payload(snapshot, seq, args.limit)
                     current = json.loads(wire)
+                    add_forecast(current, latest.get('forecast'))
+                    current['i'] = args.interval
                     volume_request = pending_volume()
                     if volume_request:
                         current['vol'] = volume_request['volume']
                     event = int(time.time()) if getattr(args, 'test_voice', False) else (
                         None if getattr(args, 'no_voice', False) else reset_event(previous, current))
+                    reset_notice_event = None
+                    reset_monitor = latest.get('reset_monitor')
+                    if reset_monitor and reset_settings()['enabled'] and not getattr(args, 'no_voice', False):
+                        reset_notice_event = await asyncio.to_thread(reset_monitor.pending)
+                        if reset_notice_event:
+                            event = reset_notice_event['event']
+                            if reset_notice_event.get('kind') == 'preview': current['ak'] = 1
                     if volume_request and volume_request.get('preview'):
                         event = int(time.time())
+                        reset_notice_event = None
+                        current.pop('ak', None)
                     if event:
                         current['a'] = event
                     wire = (json.dumps(current, separators=(',', ':')) + '\n').encode()
@@ -125,8 +151,11 @@ async def sync_ble(args, executable, latest):
                                 if not ack.get('ok'):
                                     raise RuntimeError(f'Device rejected update: {ack}')
                                 break
-                    print(f'Acknowledged seq={seq}: {wire.decode().strip()}', flush=True)
-                    status('synced', address=matches[0].address, windows=current['w'], fetchedAt=current['at'])
+                    print(f'Acknowledged seq={seq} battery={telemetry.get("batteryMv", "--")}mV: {wire.decode().strip()}', flush=True)
+                    status('synced', address=matches[0].address, windows=current['w'], fetchedAt=current['at'],
+                           batteryMv=telemetry.get('batteryMv'))
+                    if reset_notice_event:
+                        await asyncio.to_thread(reset_monitor.acknowledge, reset_notice_event['id'])
                     if volume_request:
                         temp_result = RESULT.with_suffix('.tmp')
                         temp_result.write_text(json.dumps(volume_request), encoding='utf-8')
@@ -146,6 +175,9 @@ async def sync_ble(args, executable, latest):
                             break
                         if pending_volume():
                             break
+                        if reset_monitor and reset_settings()['enabled'] and not getattr(args, 'no_voice', False):
+                            if await asyncio.to_thread(reset_monitor.pending):
+                                break
                 raise RuntimeError('BLE disconnected')
         except Exception as error:
             if args.once:
@@ -153,13 +185,13 @@ async def sync_ble(args, executable, latest):
             print(f'{type(error).__name__}: {error}; retry in {backoff}s', flush=True)
             status('retrying', error=f'{type(error).__name__}: {error}', retrySeconds=backoff)
             await asyncio.sleep(backoff)
-            backoff = min(backoff * 2, 60)
+            backoff = min(backoff * 2, 5)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--once', action='store_true')
-    parser.add_argument('--interval', type=int, default=60)
+    parser.add_argument('--interval', type=int, default=300)
     parser.add_argument('--address')
     parser.add_argument('--limit', default='codex')
     parser.add_argument('--codex')
@@ -168,8 +200,8 @@ def main():
     args = parser.parse_args()
     if args.test_voice:
         args.once = True
-    if args.interval < 10 or args.interval > 120:
-        parser.error('--interval must be between 10 and 120 seconds (device marks data stale at 5 minutes)')
+    if args.interval < 10 or args.interval > 600:
+        parser.error('--interval must be between 10 and 600 seconds')
     try:
         asyncio.run(run(args))
     except KeyboardInterrupt:

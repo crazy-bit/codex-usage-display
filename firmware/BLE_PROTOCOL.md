@@ -13,3 +13,15 @@ v 为版本，s 为编号，at 为采集 Unix 秒；w 为指定额度桶的 1～
 可选字段 a 为语音事件编号（以发生重置的旧 resetsAt Unix 秒作为编号；试听使用当前 Unix 秒）。合法用量消息带 a 时，板端将“干活啦”放入独立音频任务，NVS 记录最近编号去重。ok=1 仅确认消息接收，不代表声音已播放；播放成功由串口 playback=OK 日志确认。
 
 可选 vol 字段为 0～100 的整数；非法值拒绝整条消息，合法值先保存到 NVS 再确认。与 a 同时携带时，按新音量播报。相同音量不重复写入 NVS，默认值为80。
+
+Optional fields: app="Codex"; f={"p":39,"t":1792575108,"age":30} (48-hour reset chance, percent, source UTC Unix timestamp and age in seconds at send time), or f=null when unavailable. Forecast never triggers audio.
+
+
+
+Optional i: sync interval seconds (10..600, default 300). The display wakes every 300 seconds, accepts one update, refreshes, and returns to deep sleep. OFFLINE appears after 3 wake cycles without a valid frame and clears on the next valid frame. NEXT RESET uses the current quota window w[].t (Codex resetsAt), rendered UTC+8. Extra global free reset dates are no longer displayed.
+
+Optional rc={n:available full-reset count,t:nearest expiry Unix timestamp or null}, rc=null if unavailable. Counts only available, unexpired codexRateLimits reset credits. Display FULL RESET count and nearest expiry in UTC+8. No credit IDs or redemption operations are transmitted.
+
+Forecast f.k=1 means Tibo signal score (signal_percent); f.k=0 means historical 48-hour forecast. ak=1 selects reset-preview voice; omitted/0 selects confirmed-reset voice. Preview and confirmation use distinct event IDs.
+
+BLE recovery: disconnect callback only marks disconnected. A dedicated task checks each second, restarts missing advertisements, and refreshes advertising every 30 seconds while disconnected. Connections idle without valid ATT fragments for 240 seconds are disconnected for recovery. Serial logs record connection, disconnection, advertising recovery and free heap. USB serial access can trigger USB_UART_CHIP_RESET, so logs after attachment may not preserve the pre-attachment fault.

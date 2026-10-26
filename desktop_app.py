@@ -15,7 +15,6 @@ from app_paths import data_dir, write_json
 from desktop_settings import validated
 
 TITLE = 'Codex 用量显示器'
-_mutex = None
 WORKER_MODE = '--worker' in sys.argv
 
 
@@ -68,20 +67,25 @@ def main():
             'trayAvailable': QSystemTrayIcon.isSystemTrayAvailable(), 'bleBackend': BleakScanner.__module__})
         app.exiting=True; app.close()
         return
-    global _mutex
-    kernel = ctypes.windll.kernel32
-    kernel.CreateMutexW.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR]
-    kernel.CreateMutexW.restype = wintypes.HANDLE
-    _mutex = kernel.CreateMutexW(None, False, 'Local\\CodexUsageDisplayDesktop')
-    if kernel.GetLastError() == 183:
-        ctypes.windll.user32.FindWindowW.restype = wintypes.HWND
-        ctypes.windll.user32.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
-        hwnd = ctypes.windll.user32.FindWindowW(None, TITLE)
-        if hwnd:
-            ctypes.windll.user32.ShowWindow(hwnd, 9)
-            ctypes.windll.user32.SetForegroundWindow(hwnd)
+    from PySide6.QtNetwork import QLocalServer, QLocalSocket
+    server_name = 'CodexUsageDisplayDesktop'
+    socket = QLocalSocket()
+    socket.connectToServer(server_name)
+    if socket.waitForConnected(1500):
+        socket.write(b'show'); socket.flush(); socket.waitForBytesWritten(1500)
+        socket.disconnectFromServer()
         return
+    QLocalServer.removeServer(server_name)
+    server = QLocalServer(qt)
+    if not server.listen(server_name):
+        raise RuntimeError('无法启动桌面窗口通信服务：' + server.errorString())
     app = DesktopApp()
+    def show_existing():
+        while server.hasPendingConnections():
+            connection = server.nextPendingConnection()
+            app.open_settings()
+            connection.close(); connection.deleteLater()
+    server.newConnection.connect(show_existing)
     app.show()
     qt.aboutToQuit.connect(app.stop_worker)
     qt.exec()

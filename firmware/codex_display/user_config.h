@@ -21,6 +21,7 @@
 #define EPD_PWR_PIN     GPIO_NUM_6
 #define Audio_PWR_PIN   GPIO_NUM_42
 #define VBAT_PWR_PIN    GPIO_NUM_17
+#define BAT_ADC_PIN     GPIO_NUM_4
 
 #define BOOT_BUTTON_PIN GPIO_NUM_0
 #define PWR_BUTTON_PIN  GPIO_NUM_18

@@ -9,3 +9,5 @@ The firmware uses sources from [Waveshare ESP32-S3-ePaper-1.54](https://github.c
 - `firmware/assets/gan-huo-la.wav` and `voice_pcm.h` are the reminder phrase “干活啦”, synthesized locally using the Windows Microsoft Huihui voice. The WAV is the source audio; the header is 16kHz, signed 16-bit stereo PCM used by the firmware.
 
 Desktop dependencies are declared in requirements-desktop.txt and requirements-ble.txt; their respective licenses continue to apply. No repository-wide license grant is implied for the above third-party components.
+
+firmware/assets/reset-preview.wav and preview_pcm.h are generated locally using Windows Microsoft Huihui Desktop TTS, saying 收到重置预告，请查看通知。 PCM: 16 kHz, 16-bit stereo.
