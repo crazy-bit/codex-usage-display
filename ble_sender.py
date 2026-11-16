@@ -33,21 +33,25 @@ def pending_volume():
         return None
 
 
-def read_snapshot(executable):
+def read_snapshot(codex=None):
+    # Codex desktop updates replace the versioned install directory. Resolve the
+    # executable for every read so a long-running tray process follows updates.
+    executable = find_codex(codex)
+    if not executable:
+        raise RuntimeError('Codex not found; install Codex CLI or specify --codex PATH')
     with AppServer(executable) as server:
         return normalize(server.request('account/rateLimits/read'))
 
 
 async def run(args):
-    executable = find_codex(args.codex)
-    if not executable:
+    if not find_codex(args.codex):
         raise RuntimeError('Codex not found; use --codex PATH')
     latest = {}
 
     async def collect():
         while True:
             try:
-                snapshot = await asyncio.to_thread(read_snapshot, executable)
+                snapshot = await asyncio.to_thread(read_snapshot, args.codex)
                 # Validate the selected bucket even when the hardware is offline.
                 message = json.loads(payload(snapshot, 0, args.limit))
                 latest['snapshot'] = snapshot
@@ -61,7 +65,7 @@ async def run(args):
     collector = asyncio.create_task(collect())
     reset_watcher = asyncio.create_task(watch(latest))
     try:
-        await sync_ble(args, executable, latest)
+        await sync_ble(args, args.codex, latest)
     finally:
         collector.cancel()
         reset_watcher.cancel()
@@ -75,7 +79,7 @@ async def run(args):
             pass
 
 
-async def sync_ble(args, executable, latest):
+async def sync_ble(args, codex, latest):
     backoff = 2
     status('scanning')
     while True:
@@ -117,7 +121,7 @@ async def sync_ble(args, executable, latest):
                     snapshot = latest.get('snapshot')
                     # Never resend an old cached snapshot as a fresh hardware update.
                     if snapshot is None or time.time() - __import__('datetime').datetime.fromisoformat(snapshot['fetchedAt']).timestamp() > 120:
-                        snapshot = await asyncio.to_thread(read_snapshot, executable)
+                        snapshot = await asyncio.to_thread(read_snapshot, codex)
                     seq = time.time_ns() % 1_000_000
                     wire = payload(snapshot, seq, args.limit)
                     current = json.loads(wire)

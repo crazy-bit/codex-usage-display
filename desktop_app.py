@@ -16,6 +16,7 @@ from desktop_settings import validated
 
 TITLE = 'Codex 用量显示器'
 WORKER_MODE = '--worker' in sys.argv
+BACKGROUND_MODE = '--background' in sys.argv
 
 
 def read_json(path, default=None):
@@ -52,6 +53,8 @@ def main():
                 traceback.print_exc()
             raise
         return
+    if '--background' in sys.argv:
+        sys.argv.remove('--background')
     from PySide6.QtWidgets import QApplication, QSystemTrayIcon
     from PySide6.QtCore import qVersion
     from desktop_window import DesktopApp
@@ -72,7 +75,10 @@ def main():
     socket = QLocalSocket()
     socket.connectToServer(server_name)
     if socket.waitForConnected(1500):
-        socket.write(b'show'); socket.flush(); socket.waitForBytesWritten(1500)
+        # A login-started background instance must not bring an already running
+        # instance to the foreground. Normal launches still open its settings.
+        if not BACKGROUND_MODE:
+            socket.write(b'show'); socket.flush(); socket.waitForBytesWritten(1500)
         socket.disconnectFromServer()
         return
     QLocalServer.removeServer(server_name)
@@ -86,7 +92,8 @@ def main():
             app.open_settings()
             connection.close(); connection.deleteLater()
     server.newConnection.connect(show_existing)
-    app.show()
+    if not BACKGROUND_MODE:
+        app.show()
     qt.aboutToQuit.connect(app.stop_worker)
     qt.exec()
 

@@ -5,7 +5,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 import json
-from ble_sender import run
+from ble_sender import read_snapshot, run
 from usage import normalize
 
 
@@ -30,3 +30,18 @@ class OfflineCollectionTests(unittest.IsolatedAsyncioTestCase):
             status = json.loads((home / 'quota-status.json').read_text())
             self.assertEqual(status['state'], 'ready')
             self.assertEqual(status['windows'][0]['r'], 66)
+
+
+class CodexUpdateTests(unittest.TestCase):
+    def test_each_snapshot_resolves_current_codex_path(self):
+        response = {'rateLimits': {'limitId': 'codex', 'primary': {'usedPercent': 12}}}
+        with patch('ble_sender.find_codex', side_effect=['old/codex.exe', 'new/codex.exe']) as find, \
+             patch('ble_sender.AppServer') as app_server:
+            app_server.return_value.__enter__.return_value.request.return_value = response
+            read_snapshot()
+            read_snapshot()
+        self.assertEqual(find.call_count, 2)
+        self.assertEqual(
+            [call.args[0] for call in app_server.call_args_list],
+            ['old/codex.exe', 'new/codex.exe'],
+        )
